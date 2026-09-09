@@ -108,6 +108,23 @@ describe('Auth sessions (e2e)', () => {
     return session!;
   }
 
+  async function withNodeEnv(
+    environment: 'development' | 'test' | 'production',
+    run: () => Promise<void>,
+  ) {
+    const config = app.get(ConfigService);
+    const previous = config.getOrThrow<string>('NODE_ENV');
+    const previousProcessEnv = process.env.NODE_ENV;
+    try {
+      config.set('NODE_ENV', environment);
+      await run();
+    } finally {
+      config.set('NODE_ENV', previous);
+      if (previousProcessEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousProcessEnv;
+    }
+  }
+
   it('stores a refresh hash and sets a scoped HttpOnly cookie with a fixed lifetime', async () => {
     expect(loginResponse.headers['cache-control']).toBe('no-store');
     const cookie = setCookieHeader(loginResponse);
@@ -127,10 +144,12 @@ describe('Auth sessions (e2e)', () => {
     expect(Number(cookie.match(/; Max-Age=(\d+)/)?.[1])).toBeLessThanOrEqual(
       604800,
     );
-    expect(loginResponse.body.data).toEqual({
-      access_token: expect.any(String),
-      token_type: 'Bearer',
-      expires_in: 900,
+    expect(loginResponse.body).toEqual({
+      data: {
+        access_token: expect.any(String),
+        token_type: 'Bearer',
+        expires_in: 900,
+      },
     });
 
     const session = await storedSession();
@@ -175,10 +194,12 @@ describe('Auth sessions (e2e)', () => {
     expect(refreshed.headers['cache-control']).toBe('no-store');
     const newCookie = cookiePair(refreshed);
     expect(newCookie).not.toBe(refreshCookie);
-    expect(refreshed.body.data).toEqual({
-      access_token: expect.any(String),
-      token_type: 'Bearer',
-      expires_in: 900,
+    expect(refreshed.body).toEqual({
+      data: {
+        access_token: expect.any(String),
+        token_type: 'Bearer',
+        expires_in: 900,
+      },
     });
 
     const current = await storedSession();
@@ -189,7 +210,7 @@ describe('Auth sessions (e2e)', () => {
     await me(refreshed.body.data.access_token)
       .expect(200)
       .expect(({ body }) => {
-        expect(body.data).toEqual(user);
+        expect(body).toEqual({ data: user });
       });
     await refresh(newCookie).expect(200);
   });
@@ -315,7 +336,7 @@ describe('Auth sessions (e2e)', () => {
     await me()
       .expect(200)
       .expect(({ body }) => {
-        expect(body.data).toEqual(user);
+        expect(body).toEqual({ data: user });
       });
     await refresh().expect(200);
   });
@@ -353,40 +374,105 @@ describe('Auth sessions (e2e)', () => {
     },
   );
 
-  it('rejects missing and non-matching Origins on every auth mutation without side effects', async () => {
-    for (const path of ['register', 'login', 'refresh', 'logout']) {
-      for (const requestOrigin of [
-        undefined,
-        'http://localhost:5173.evil.example',
-        `${origin}/`,
-      ]) {
-        const operation = request(app.getHttpServer())
-          .post(`/auth/${path}`)
-          .set('Cookie', refreshCookie)
-          .send(credentials);
-        if (requestOrigin) operation.set('Origin', requestOrigin);
-        await operation.expect(403);
-      }
-    }
-    expect(await app.get(UserService).findAll()).toEqual([user]);
-    expect((await storedSession()).revokedAt).toBeNull();
-    await me().expect(200);
-    await refresh().expect(200);
+  it('allows auth mutations without Origin in development while keeping Access authentication', async () => {
+    await withNodeEnv('development', async () => {
+      const localCredentials = {
+        ...credentials,
+        email: `local-${randomUUID()}@example.com`,
+      };
+      const registered = await request(app.getHttpServer())
+        .post('/auth/register')
+        .send(localCredentials)
+        .expect(201);
+      const loggedIn = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send(localCredentials)
+        .expect(200);
+      const refreshed = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', cookiePair(loggedIn))
+        .expect(200);
+
+      await request(app.getHttpServer()).get('/auth/me').expect(401);
+      await me(refreshed.body.data.access_token)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toEqual({ data: registered.body.data });
+        });
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', cookiePair(refreshed))
+        .expect(204);
+      await me(refreshed.body.data.access_token).expect(401);
+    });
   });
 
-  it('allows credentialed CORS only for the configured client origin', async () => {
-    await request(app.getHttpServer())
-      .options('/auth/refresh')
-      .set('Origin', origin)
-      .set('Access-Control-Request-Method', 'POST')
-      .expect(204)
-      .expect('Access-Control-Allow-Origin', origin)
-      .expect('Access-Control-Allow-Credentials', 'true');
-    const denied = await request(app.getHttpServer())
-      .options('/auth/refresh')
-      .set('Origin', 'https://other.example')
-      .set('Access-Control-Request-Method', 'POST');
-    expect(denied.headers['access-control-allow-origin']).toBeUndefined();
+  it.each(['development', 'test', 'production'] as const)(
+    'rejects disallowed Origins on every auth mutation without side effects in %s',
+    async (environment) => {
+      await withNodeEnv(environment, async () => {
+        const db = app.get(DatabaseService).db;
+        const sessionsBefore = await db.select().from(authSessions);
+        const disallowedOrigins: (string | undefined)[] = [
+          '',
+          'null',
+          'http://localhost:5173.evil.example',
+          `${origin}/`,
+        ];
+        if (environment !== 'development') disallowedOrigins.push(undefined);
+
+        for (const path of ['register', 'login', 'refresh', 'logout']) {
+          for (const requestOrigin of disallowedOrigins) {
+            const operation = request(app.getHttpServer())
+              .post(`/auth/${path}`)
+              .set('Cookie', refreshCookie)
+              .send(credentials);
+            if (requestOrigin !== undefined) {
+              operation.set('Origin', requestOrigin);
+            }
+            const response = await operation.expect(403);
+            expect(response.body).toEqual({
+              error: {
+                code: 'ORIGIN_NOT_ALLOWED',
+                message: 'Origin not allowed',
+              },
+            });
+            expect(response.headers['x-request-id']).toMatch(
+              /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+            );
+          }
+        }
+        expect(await app.get(UserService).findAll()).toEqual([user]);
+        expect(await db.select().from(authSessions)).toEqual(sessionsBefore);
+        await me().expect(200);
+        await refresh().expect(200);
+      });
+    },
+  );
+
+  it('allows credentialed CORS only for the configured client origin in development', async () => {
+    await app.close();
+    const moduleFixture = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    app = moduleFixture.createNestApplication();
+
+    await withNodeEnv('development', async () => {
+      configureHttp(app);
+      await app.init();
+      await request(app.getHttpServer())
+        .options('/auth/refresh')
+        .set('Origin', origin)
+        .set('Access-Control-Request-Method', 'POST')
+        .expect(204)
+        .expect('Access-Control-Allow-Origin', origin)
+        .expect('Access-Control-Allow-Credentials', 'true');
+      const denied = await request(app.getHttpServer())
+        .options('/auth/refresh')
+        .set('Origin', 'https://other.example')
+        .set('Access-Control-Request-Method', 'POST');
+      expect(denied.headers['access-control-allow-origin']).toBeUndefined();
+    });
   });
 
   it('keeps the refresh session usable after the application restarts', async () => {
@@ -397,13 +483,13 @@ describe('Auth sessions (e2e)', () => {
     await me()
       .expect(200)
       .expect(({ body }) => {
-        expect(body.data).toEqual(user);
+        expect(body).toEqual({ data: user });
       });
     const refreshed = await refresh().expect(200);
     await me(refreshed.body.data.access_token)
       .expect(200)
       .expect(({ body }) => {
-        expect(body.data).toEqual(user);
+        expect(body).toEqual({ data: user });
       });
     expect((await storedSession()).expiresAt).toEqual(previous.expiresAt);
   });
