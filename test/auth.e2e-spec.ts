@@ -67,12 +67,14 @@ describe('Auth (e2e)', () => {
     }).expect(201);
     const user = registered.body.data;
 
-    expect(user).toEqual({
-      id: expect.stringMatching(
-        /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i,
-      ),
-      name: 'Alice',
-      email: 'alice@example.com',
+    expect(registered.body).toEqual({
+      data: {
+        id: expect.stringMatching(
+          /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i,
+        ),
+        name: 'Alice',
+        email: 'alice@example.com',
+      },
     });
     expect(user.id).not.toBe(suppliedId);
 
@@ -86,10 +88,12 @@ describe('Auth (e2e)', () => {
       email: '  ALICE@EXAMPLE.COM  ',
       password: credentials.password,
     }).expect(200);
-    expect(session.body.data).toEqual({
-      access_token: expect.any(String),
-      token_type: 'Bearer',
-      expires_in: 900,
+    expect(session.body).toEqual({
+      data: {
+        access_token: expect.any(String),
+        token_type: 'Bearer',
+        expires_in: 900,
+      },
     });
 
     const payload = app.get(JwtService).verify(session.body.data.access_token);
@@ -103,14 +107,14 @@ describe('Auth (e2e)', () => {
       .auth(session.body.data.access_token, { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {
-        expect(body.data).toEqual(user);
+        expect(body).toEqual({ data: user });
       });
     await request(app.getHttpServer())
       .get(`/user/${user.id}`)
       .auth(session.body.data.access_token, { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {
-        expect(body.data).toEqual(user);
+        expect(body).toEqual({ data: user });
       });
 
     await login({
@@ -128,6 +132,14 @@ describe('Auth (e2e)', () => {
     expect(responses.map((response) => response.status).sort()).toEqual([
       201, 409,
     ]);
+    expect(responses.find((response) => response.status === 409)?.body).toEqual(
+      {
+        error: {
+          code: 'EMAIL_ALREADY_REGISTERED',
+          message: 'Email already registered',
+        },
+      },
+    );
     expect(await app.get(UserService).findAll()).toHaveLength(1);
     await register().expect(409);
   });
@@ -140,7 +152,13 @@ describe('Auth (e2e)', () => {
         'stored-password-hash',
       );
 
-    await register().expect(409);
+    const response = await register().expect(409);
+    expect(response.body).toEqual({
+      error: {
+        code: 'EMAIL_ALREADY_REGISTERED',
+        message: 'Email already registered',
+      },
+    });
     expect(await app.get(UserService).findAll()).toEqual([existing]);
   });
 
@@ -155,11 +173,16 @@ describe('Auth (e2e)', () => {
       bodies.map((body) => login(body).expect(401)),
     );
 
-    expect(responses[0].body.error.message).toBe('Unauthorized');
-    expect(responses[1].body.error).toEqual(responses[0].body.error);
+    expect(responses[0].body).toEqual({
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Unauthorized',
+      },
+    });
+    expect(responses[1].body).toEqual(responses[0].body);
     for (const response of responses) {
-      expect(response.body.meta.requestId).toBe(
-        response.headers['x-request-id'],
+      expect(response.headers['x-request-id']).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
     }
   });
@@ -183,7 +206,7 @@ describe('Auth (e2e)', () => {
       .auth('invalid-token', { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {
-        expect(body.data).toBe('Hello World!');
+        expect(body).toEqual({ data: 'Hello World!' });
       });
     await register().auth('invalid-token', { type: 'bearer' }).expect(201);
     await login().auth('invalid-token', { type: 'bearer' }).expect(200);
@@ -239,7 +262,12 @@ describe('Auth (e2e)', () => {
         .get('/auth/me')
         .auth(token, { type: 'bearer' })
         .expect(401);
-      expect(response.body.error.message).toBe('Unauthorized');
+      expect(response.body).toEqual({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Unauthorized',
+        },
+      });
     }
   });
 
@@ -255,7 +283,7 @@ describe('Auth (e2e)', () => {
       .auth(oldSession.body.data.access_token, { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {
-        expect(body.data).toEqual(original.body.data);
+        expect(body).toEqual({ data: original.body.data });
       });
     await login().expect(200);
     await register().expect(409);
@@ -288,7 +316,7 @@ describe('Auth (e2e)', () => {
       .auth(newSession.body.data.access_token, { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {
-        expect(body.data).toEqual(replacement.body.data);
+        expect(body).toEqual({ data: replacement.body.data });
       });
   });
 });

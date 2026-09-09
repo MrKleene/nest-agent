@@ -7,8 +7,8 @@ import {
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { STATUS_CODES } from 'node:http';
 import type { ApiErrorResponse } from '../http/api-response.interface.js';
+import { API_ERRORS, getApiError } from '../http/api-errors.js';
 import { getRequestId, getRequestPath } from '../http/request-context.js';
 
 @Catch()
@@ -21,34 +21,24 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const response = http.getResponse<Response>();
     const requestId = getRequestId(request, response);
     const status = this.getStatus(exception);
-    const error: ApiErrorResponse['error'] = {
-      code: HttpStatus[status] ?? 'HTTP_ERROR',
-      message: STATUS_CODES[status] ?? 'Request failed',
-    };
+    let error = getApiError(status);
 
     if (exception instanceof HttpException && status < 500) {
+      error = getApiError(status, exception.errorCode);
       const body = exception.getResponse();
       const message: unknown =
         typeof body === 'string'
           ? body
           : (body as { message?: unknown }).message;
-      if (exception.errorCode) error.code = exception.errorCode;
       if (
         status === 400 &&
         Array.isArray(message) &&
         message.every((item) => typeof item === 'string')
       ) {
-        error.code = 'VALIDATION_ERROR';
-        error.message = 'Request validation failed';
-        error.details = message;
-      } else if (
-        typeof message === 'string' &&
-        status !== 404 &&
-        (status !== 400 || exception.errorCode)
-      ) {
-        // JSON parser errors become BadRequestException with input in the message.
-        // Keep generic 400/404 messages unless a business 400 is explicitly coded.
-        error.message = message;
+        error = {
+          ...getApiError(status, API_ERRORS.VALIDATION_ERROR.code),
+          details: message,
+        };
       }
     }
 
@@ -68,9 +58,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
       return;
     }
     response.setHeader('Cache-Control', 'no-store');
-    response
-      .status(status)
-      .json({ error, meta: { requestId } } satisfies ApiErrorResponse);
+    response.status(status).json({ error } satisfies ApiErrorResponse);
   }
 
   private getStatus(exception: unknown): number {

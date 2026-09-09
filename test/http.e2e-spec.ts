@@ -4,8 +4,11 @@ import {
   ForbiddenException,
   Get,
   HttpCode,
+  HttpException,
   Logger,
+  Param,
   Post,
+  Query,
   Sse,
   StreamableFile,
   type INestApplication,
@@ -43,6 +46,17 @@ class HttpProbeController {
   @Get('unsafe-error')
   unsafeError(): never {
     throw new Error(sensitiveSql, { cause: new Error(sensitiveToken) });
+  }
+
+  @Get('custom-error/:status')
+  customError(
+    @Param('status') status: string,
+    @Query('errorCode') errorCode?: string,
+  ): never {
+    throw new HttpException(sensitiveSql, Number(status), {
+      errorCode,
+      cause: new Error(sensitiveToken),
+    });
   }
 
   @Post('no-content')
@@ -131,11 +145,14 @@ describe('HTTP infrastructure (e2e)', () => {
       .filter((entry) => entry?.event === 'http_request');
   }
 
-  function expectError(response: request.Response, code: string): string {
+  function expectError(
+    response: request.Response,
+    code: string,
+    message: string,
+  ): string {
     const id = requestId(response);
     expect(response.body).toEqual({
-      error: expect.objectContaining({ code, message: expect.any(String) }),
-      meta: { requestId: id },
+      error: expect.objectContaining({ code, message }),
     });
     return id;
   }
@@ -151,7 +168,6 @@ describe('HTTP infrastructure (e2e)', () => {
     expect(id).not.toBe('client-controlled-id');
     expect(response.body).toEqual({
       data: { data: { original: true }, label: 'original' },
-      meta: { requestId: id },
     });
     expect(
       response.headers['access-control-expose-headers'].toLowerCase(),
@@ -164,7 +180,11 @@ describe('HTTP infrastructure (e2e)', () => {
       .send({ name: 'x' })
       .expect(400);
 
-    const id = expectError(response, 'VALIDATION_ERROR');
+    const id = expectError(
+      response,
+      'VALIDATION_ERROR',
+      'Request validation failed',
+    );
     expect(response.body.error.details.length).toBeGreaterThan(0);
     expect(response.body.error.details).toEqual(
       expect.arrayContaining([expect.any(String)]),
@@ -187,9 +207,23 @@ describe('HTTP infrastructure (e2e)', () => {
       .get('/http-probe/unsafe-error')
       .expect(500);
 
-    expectError(response, 'INTERNAL_SERVER_ERROR');
-    expect(response.body.error.message).toBe('Internal Server Error');
+    const id = expectError(
+      response,
+      'INTERNAL_SERVER_ERROR',
+      'Internal Server Error',
+    );
     expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledWith({
+      event: 'http_error',
+      requestId: id,
+      method: 'GET',
+      path: '/http-probe/unsafe-error',
+      statusCode: 500,
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+    expect(requestLogs()).toEqual([
+      expect.objectContaining({ requestId: id, statusCode: 500 }),
+    ]);
     const output = inspect(
       [response.body, logSpy.mock.calls, errorSpy.mock.calls],
       { depth: 10 },
@@ -198,6 +232,46 @@ describe('HTTP infrastructure (e2e)', () => {
     expect(output).not.toContain(sensitiveToken);
   });
 
+  it.each([
+    [401, undefined, 'UNAUTHORIZED', 'Unauthorized'],
+    [401, 'PRIVATE_ERROR', 'UNAUTHORIZED', 'Unauthorized'],
+    [403, undefined, 'FORBIDDEN', 'Forbidden'],
+    [403, 'PRIVATE_ERROR', 'FORBIDDEN', 'Forbidden'],
+    [
+      409,
+      'EMAIL_ALREADY_REGISTERED',
+      'EMAIL_ALREADY_REGISTERED',
+      'Email already registered',
+    ],
+    [
+      500,
+      'EMAIL_ALREADY_REGISTERED',
+      'INTERNAL_SERVER_ERROR',
+      'Internal Server Error',
+    ],
+  ] as const)(
+    'normalizes custom HTTP %i errors with errorCode %s',
+    async (status, errorCode, expectedCode, expectedMessage) => {
+      const operation = request(app.getHttpServer()).get(
+        `/http-probe/custom-error/${status}`,
+      );
+      if (errorCode) operation.query({ errorCode });
+      const response = await operation.expect(status);
+
+      expectError(response, expectedCode, expectedMessage);
+      expect(response.body.error).toEqual({
+        code: expectedCode,
+        message: expectedMessage,
+      });
+      const output = inspect(
+        [response.body, logSpy.mock.calls, errorSpy.mock.calls],
+        { depth: 10 },
+      );
+      expect(output).not.toContain(sensitiveSql);
+      expect(output).not.toContain(sensitiveToken);
+    },
+  );
+
   it('assigns a request ID before malformed JSON is rejected', async () => {
     const response = await request(app.getHttpServer())
       .post('/http-probe/validate')
@@ -205,7 +279,7 @@ describe('HTTP infrastructure (e2e)', () => {
       .send('{"private-malformed-json":')
       .expect(400);
 
-    expectError(response, 'BAD_REQUEST');
+    expectError(response, 'BAD_REQUEST', 'Bad Request');
     expect(JSON.stringify(response.body)).not.toContain(
       'private-malformed-json',
     );
@@ -216,7 +290,7 @@ describe('HTTP infrastructure (e2e)', () => {
       .get('/private-unmatched-path?token=private-query')
       .expect(404);
 
-    const id = expectError(response, 'NOT_FOUND');
+    const id = expectError(response, 'NOT_FOUND', 'Not Found');
     expect(requestLogs()).toEqual([
       expect.objectContaining({
         requestId: id,
@@ -232,7 +306,7 @@ describe('HTTP infrastructure (e2e)', () => {
       .set('Authorization', 'Bearer private-invalid-token')
       .expect(401);
 
-    const id = expectError(response, 'UNAUTHORIZED');
+    const id = expectError(response, 'UNAUTHORIZED', 'Unauthorized');
     expect(requestLogs()).toEqual([
       {
         event: 'http_request',
@@ -295,7 +369,7 @@ describe('HTTP infrastructure (e2e)', () => {
     const failure = await request(app.getHttpServer())
       .get('/http-probe/raw-error')
       .expect(403);
-    expectError(failure, 'FORBIDDEN');
+    expectError(failure, 'FORBIDDEN', 'Forbidden');
   });
 
   it('logs a route template once without query, body, authorization, or cookies', async () => {

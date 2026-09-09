@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
+import { API_ERRORS } from '../common/http/api-errors.js';
 import { DatabaseService } from '../database/database.service.js';
 import { users } from '../database/schema.js';
 import type { CreateUserDto } from './dto/create-user.dto.js';
@@ -43,9 +44,8 @@ export class UserService {
       });
 
     if (!user) {
-      throw new ConflictException('Email already registered', {
-        errorCode: 'EMAIL_ALREADY_REGISTERED',
-      });
+      const { code, message } = API_ERRORS.EMAIL_ALREADY_REGISTERED;
+      throw new ConflictException(message, { errorCode: code });
     }
 
     return user;

@@ -15,7 +15,6 @@ import type { Request, Response } from 'express';
 import { map, type Observable } from 'rxjs';
 import { RAW_RESPONSE_KEY } from '../decorators/raw-response.decorator.js';
 import type { ApiResponse } from '../http/api-response.interface.js';
-import { getRequestId } from '../http/request-context.js';
 
 @Injectable()
 export class ApiResponseInterceptor implements NestInterceptor {
@@ -61,7 +60,6 @@ export class ApiResponseInterceptor implements NestInterceptor {
         }
         return {
           data: data ?? null,
-          meta: { requestId: getRequestId(request, response) },
         } satisfies ApiResponse<unknown>;
       }),
     );
