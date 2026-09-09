@@ -87,7 +87,14 @@ API 默认是 `http://localhost:3000`。`CLIENT_ORIGIN` 填前端实际使用的
 
 Refresh Cookie 名为 `nest_agent_refresh`，属性为 `HttpOnly; SameSite=Lax; Path=/auth`，不设置 `Domain`。本地 HTTP 不启用 `Secure`；`NODE_ENV=production` 时自动启用，需要通过 HTTPS 使用。Cookie 有效期跟随会话剩余时间，刷新不会重置七天期限。
 
-CORS 仅允许 `CLIENT_ORIGIN`，并允许凭据。所有 `POST /auth/*` 请求还必须携带与其完全一致的 `Origin`，缺失或不匹配返回 403。`@Public()` 只跳过 Access 鉴权，不跳过这个检查。使用 curl 或 API 调试工具时也需要设置 `Origin`。
+CORS 仅允许 `CLIENT_ORIGIN`，并允许凭据。`OriginGuard` 对 `POST /auth/*` 按以下规则检查：
+
+- `NODE_ENV=development`：允许完全不带 `Origin` 的请求，方便 curl、Postman 等工具调试；如果携带了 `Origin`，仍必须与 `CLIENT_ORIGIN` 完全一致。空值、字符串 `null`、其他来源均返回 `403 ORIGIN_NOT_ALLOWED`。
+- `NODE_ENV=test` 或 `production`：必须携带与 `CLIENT_ORIGIN` 完全一致的 `Origin`，缺失或不匹配均返回 `403 ORIGIN_NOT_ALLOWED`。
+
+`NODE_ENV` 未配置时默认为 `development`。本地调试可显式设置 `NODE_ENV=development`，重启服务后，调试工具可以省略 `Origin` 请求头。浏览器前端仍需将 `CLIENT_ORIGIN` 配成实际前端地址；删除该配置只会恢复默认值，不会关闭 CORS 或来源校验。生产部署需显式设置 `NODE_ENV=production`。
+
+这项开发环境例外只放宽来源检查，参数校验、Access Token 和会话校验仍然执行。`@Public()` 只跳过 Access 鉴权，不跳过来源检查。
 
 ### 请求流程与代码职责
 
@@ -103,7 +110,7 @@ CORS 仅允许 `CLIENT_ORIGIN`，并允许凭据。所有 `POST /auth/*` 请求�
 
 ### 接口响应与前端接入
 
-普通 JSON 成功响应统一包装为 `data` 和 `meta`。`meta.requestId` 会同时出现在 `X-Request-Id` 响应头中，便于把客户端错误和服务端日志关联起来。登录和刷新返回下面的 `data` 结构，并通过 `Set-Cookie` 写入 Refresh Token：
+普通 JSON 成功响应统一为 `{ data }`。请求追踪 ID 仅通过 `X-Request-Id` 响应头返回，与服务端日志中的 `requestId` 一致；成功和错误响应体均不再包含 `meta.requestId`，也不返回空的 `meta`。登录和刷新返回下面的 `data` 结构，并通过 `Set-Cookie` 写入 Refresh Token：
 
 ```json
 {
@@ -111,14 +118,40 @@ CORS 仅允许 `CLIENT_ORIGIN`，并允许凭据。所有 `POST /auth/*` 请求�
     "access_token": "<JWT>",
     "token_type": "Bearer",
     "expires_in": 900
-  },
-  "meta": {
-    "requestId": "<UUID>"
   }
 }
 ```
 
-错误响应统一为 `{ error: { code, message, details? }, meta: { requestId } }`，仍使用真实 HTTP 状态码。Zod 参数校验使用 `VALIDATION_ERROR` 并在 `details` 中返回字段提示；未知错误使用 `INTERNAL_SERVER_ERROR` 和通用消息。`204` 注销和 `HEAD` 响应没有响应体；SSE、文件下载和显式 `@RawResponse()` 接口保留各自协议。
+错误响应统一为 `{ error: { code, message, details? } }`，仍使用真实 HTTP 状态码。Zod 参数校验使用 `VALIDATION_ERROR` 并在 `details` 中返回字段提示；未知错误使用 `INTERNAL_SERVER_ERROR` 和通用消息。`204` 注销和 `HEAD` 响应没有响应体；SSE、文件下载和显式 `@RawResponse()` 接口保留各自协议，这些响应同样带有 `X-Request-Id`。
+
+前端请求封装应通过 `response.headers.get('X-Request-Id')` 读取请求 ID，在抛出客户端错误前保存它，供报错反馈和日志查询使用。CORS 已通过 `Access-Control-Expose-Headers` 暴露该响应头。原生 `EventSource` 不提供读取响应头的 API，后续若选用它并需要在页面获取连接的请求 ID，需在流式协议中另行设计。
+
+这次响应约定移除了原来的 `meta.requestId`，已有调用方需同步改为读取响应头。以后出现分页总数、游标等业务结果附加信息时，再按接口需求定义响应体的 `meta`；当前不自动生成业务元信息。
+
+错误码、默认消息和对应 HTTP 状态集中在 `src/common/http/api-errors.ts`。当前接口约定如下：
+
+| 场景                 | HTTP 状态 | `error.code`               | `error.message`             |
+| -------------------- | --------- | -------------------------- | --------------------------- |
+| 请求 JSON 格式错误   | 400       | `BAD_REQUEST`              | `Bad Request`               |
+| 参数校验失败         | 400       | `VALIDATION_ERROR`         | `Request validation failed` |
+| 认证失败或会话不可用 | 401       | `UNAUTHORIZED`             | `Unauthorized`              |
+| 用户越权访问         | 403       | `FORBIDDEN`                | `Forbidden`                 |
+| 认证请求来源校验失败 | 403       | `ORIGIN_NOT_ALLOWED`       | `Origin not allowed`        |
+| 资源或路由不存在     | 404       | `NOT_FOUND`                | `Not Found`                 |
+| 通用资源冲突         | 409       | `CONFLICT`                 | `Conflict`                  |
+| 邮箱已注册           | 409       | `EMAIL_ALREADY_REGISTERED` | `Email already registered`  |
+| 未知服务端错误       | 500       | `INTERNAL_SERVER_ERROR`    | `Internal Server Error`     |
+
+前端使用 HTTP 状态和 `error.code` 判断处理分支，`message` 用于说明错误，不用于字符串匹配；需要中文提示时可按 `code` 映射。`VALIDATION_ERROR` 的字段提示保留在 `details: string[]`，不保证提示文案不变。登录凭据错误、Access/Refresh Token 无效或会话不可用统一返回 `UNAUTHORIZED`。
+
+新增业务错误时，先在 `API_ERRORS` 登记状态、错误码和固定消息，再通过 Nest 内置异常的 `errorCode` 传入，例如：
+
+```ts
+const { code, message } = API_ERRORS.EMAIL_ALREADY_REGISTERED;
+throw new ConflictException(message, { errorCode: code });
+```
+
+全局过滤器只使用已登记且与 HTTP 状态匹配的业务码和消息，不透传抛出位置的自定义消息。未登记的错误码回退到 HTTP 默认错误；5xx 始终使用通用错误码和消息，不返回内部异常或 cause。其他 HTTP 错误（例如 413）仍保留实际状态并使用标准 HTTP 错误码和消息。本次 Origin 错误码由 `FORBIDDEN` 细分为 `ORIGIN_NOT_ALLOWED`，HTTP 状态和消息保持不变。
 
 响应体不包含 Refresh Token；登录、刷新、成功注销和错误响应设置 `Cache-Control: no-store`。Access 存放在前端内存中，受保护请求添加 Bearer 请求头；前端调用登录、刷新和注销时设置 `credentials: 'include'`，由浏览器管理 HttpOnly Cookie。网页刷新后可以调用 `/auth/refresh` 恢复内存中的 Access，JavaScript 无需读取 Cookie。Access 的前端存放位置仍需前端按这一约定实现。
 
@@ -131,7 +164,14 @@ const response = await fetch('http://localhost:3000/auth/refresh', {
   method: 'POST',
   credentials: 'include',
 });
-if (!response.ok) throw new Error('需要重新登录');
+const requestId = response.headers.get('X-Request-Id');
+if (!response.ok) {
+  const { error } = await response.json();
+  throw Object.assign(new Error(error.message), {
+    code: error.code,
+    requestId,
+  });
+}
 const { access_token } = (await response.json()).data;
 // 在应用内存中保存 access_token；浏览器会自动处理新的 Refresh Cookie。
 ```
