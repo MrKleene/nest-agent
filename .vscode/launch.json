@@ -1,0 +1,18 @@
+{
+  // 使用 IntelliSense 了解相关属性。
+  // 悬停以查看现有属性的描述。
+  // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug NestJS",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start:debug"], // 对应 package.json 中的脚本
+      "console": "integratedTerminal", // 输出到 VSCode 终端
+      "restart": true, // 进程结束后自动重启
+      "skipFiles": ["<node_internals>/**"] // 跳过 Node.js 内部代码
+    }
+  ]
+}
