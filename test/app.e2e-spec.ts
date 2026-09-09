@@ -19,7 +19,7 @@ describe('AppController (e2e)', () => {
   });
 
   it('/ (GET)', async () => {
-    const response = await request(app.getHttpServer()).get('/').expect(200);
+    const response = await request(app.getHttpServer()).get('/api').expect(200);
 
     expect(response.body).toEqual({
       data: 'Hello World!',

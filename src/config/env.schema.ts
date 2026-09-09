@@ -5,6 +5,16 @@ export const envSchema = z.object({
     .enum(['development', 'test', 'production'])
     .default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  API_PREFIX: z
+    .string()
+    .trim()
+    .transform((value) => value.replace(/^\/+|\/+$/g, ''))
+    .pipe(
+      z.string().regex(/^(?:[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)?$/, {
+        message: 'API_PREFIX must contain literal path segments, or be empty',
+      }),
+    )
+    .default('api'),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   JWT_SECRET: z.string().trim().min(32),
   JWT_ACCESS_TOKEN_TTL_SECONDS: z.coerce

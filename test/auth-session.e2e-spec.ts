@@ -54,7 +54,7 @@ describe('Auth sessions (e2e)', () => {
     app = await createApp();
     await app.get(DatabaseService).db.delete(users);
     const registered = await request(app.getHttpServer())
-      .post('/auth/register')
+      .post('/api/auth/register')
       .set('Origin', origin)
       .send(credentials)
       .expect(201);
@@ -71,21 +71,21 @@ describe('Auth sessions (e2e)', () => {
 
   function login() {
     return request(app.getHttpServer())
-      .post('/auth/login')
+      .post('/api/auth/login')
       .set('Origin', origin)
       .send({ email: credentials.email, password: credentials.password });
   }
 
   function refresh(cookie = refreshCookie) {
     return request(app.getHttpServer())
-      .post('/auth/refresh')
+      .post('/api/auth/refresh')
       .set('Origin', origin)
       .set('Cookie', cookie);
   }
 
   function logout(cookie?: string, token?: string) {
     const operation = request(app.getHttpServer())
-      .post('/auth/logout')
+      .post('/api/auth/logout')
       .set('Origin', origin);
     if (cookie) operation.set('Cookie', cookie);
     if (token) operation.auth(token, { type: 'bearer' });
@@ -94,7 +94,7 @@ describe('Auth sessions (e2e)', () => {
 
   function me(token = accessToken) {
     return request(app.getHttpServer())
-      .get('/auth/me')
+      .get('/api/auth/me')
       .auth(token, { type: 'bearer' });
   }
 
@@ -133,7 +133,7 @@ describe('Auth sessions (e2e)', () => {
     expect(sid).toBe(sessionId);
     expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(Buffer.from(secret, 'base64url')).toHaveLength(32);
-    expect(cookie).toMatch(/; Path=\/auth(?:;|$)/);
+    expect(cookie).toMatch(/; Path=\/api\/auth(?:;|$)/);
     expect(cookie).toMatch(/; HttpOnly(?:;|$)/);
     expect(cookie).toMatch(/; SameSite=Lax(?:;|$)/);
     expect(cookie).not.toMatch(/; Secure(?:;|$)/);
@@ -182,7 +182,9 @@ describe('Auth sessions (e2e)', () => {
         productionLogin.body.data.access_token,
       ).expect(204);
       expect(setCookieHeader(productionLogout)).toMatch(/; Secure(?:;|$)/);
-      expect(setCookieHeader(productionLogout)).toMatch(/; Path=\/auth(?:;|$)/);
+      expect(setCookieHeader(productionLogout)).toMatch(
+        /; Path=\/api\/auth(?:;|$)/,
+      );
     } finally {
       configSpy.mockRestore();
     }
@@ -217,7 +219,7 @@ describe('Auth sessions (e2e)', () => {
 
   it('requires a valid refresh cookie even when valid Access is supplied', async () => {
     const missing = await request(app.getHttpServer())
-      .post('/auth/refresh')
+      .post('/api/auth/refresh')
       .set('Origin', origin)
       .auth(accessToken, { type: 'bearer' })
       .expect(401);
@@ -276,7 +278,7 @@ describe('Auth sessions (e2e)', () => {
       expect(response.text).toBe('');
       const cleared = setCookieHeader(response);
       expect(cleared).toMatch(/^nest_agent_refresh=;/);
-      expect(cleared).toMatch(/; Path=\/auth(?:;|$)/);
+      expect(cleared).toMatch(/; Path=\/api\/auth(?:;|$)/);
       expect(cleared).toMatch(/; HttpOnly(?:;|$)/);
       expect(cleared).toMatch(/; SameSite=Lax(?:;|$)/);
       expect(cleared).toMatch(/; Expires=Thu, 01 Jan 1970 00:00:00 GMT(?:;|$)/);
@@ -381,26 +383,26 @@ describe('Auth sessions (e2e)', () => {
         email: `local-${randomUUID()}@example.com`,
       };
       const registered = await request(app.getHttpServer())
-        .post('/auth/register')
+        .post('/api/auth/register')
         .send(localCredentials)
         .expect(201);
       const loggedIn = await request(app.getHttpServer())
-        .post('/auth/login')
+        .post('/api/auth/login')
         .send(localCredentials)
         .expect(200);
       const refreshed = await request(app.getHttpServer())
-        .post('/auth/refresh')
+        .post('/api/auth/refresh')
         .set('Cookie', cookiePair(loggedIn))
         .expect(200);
 
-      await request(app.getHttpServer()).get('/auth/me').expect(401);
+      await request(app.getHttpServer()).get('/api/auth/me').expect(401);
       await me(refreshed.body.data.access_token)
         .expect(200)
         .expect(({ body }) => {
           expect(body).toEqual({ data: registered.body.data });
         });
       await request(app.getHttpServer())
-        .post('/auth/logout')
+        .post('/api/auth/logout')
         .set('Cookie', cookiePair(refreshed))
         .expect(204);
       await me(refreshed.body.data.access_token).expect(401);
@@ -424,7 +426,7 @@ describe('Auth sessions (e2e)', () => {
         for (const path of ['register', 'login', 'refresh', 'logout']) {
           for (const requestOrigin of disallowedOrigins) {
             const operation = request(app.getHttpServer())
-              .post(`/auth/${path}`)
+              .post(`/api/auth/${path}`)
               .set('Cookie', refreshCookie)
               .send(credentials);
             if (requestOrigin !== undefined) {
@@ -461,14 +463,14 @@ describe('Auth sessions (e2e)', () => {
       configureHttp(app);
       await app.init();
       await request(app.getHttpServer())
-        .options('/auth/refresh')
+        .options('/api/auth/refresh')
         .set('Origin', origin)
         .set('Access-Control-Request-Method', 'POST')
         .expect(204)
         .expect('Access-Control-Allow-Origin', origin)
         .expect('Access-Control-Allow-Credentials', 'true');
       const denied = await request(app.getHttpServer())
-        .options('/auth/refresh')
+        .options('/api/auth/refresh')
         .set('Origin', 'https://other.example')
         .set('Access-Control-Request-Method', 'POST');
       expect(denied.headers['access-control-allow-origin']).toBeUndefined();

@@ -22,5 +22,6 @@ export function getRequestId(
 export function getRequestPath(request: Request): string {
   // Route templates avoid logging query strings and sensitive path parameters.
   const path: unknown = request.route?.path;
-  return typeof path === 'string' ? path : '[unmatched]';
+  // Nest 12's prefixed Express 404 handler uses this catch-all route.
+  return typeof path === 'string' && path !== '*path' ? path : '[unmatched]';
 }

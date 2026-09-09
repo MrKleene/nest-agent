@@ -43,7 +43,7 @@ describe('User access (e2e)', () => {
   it('returns only the current user public profile and accepts uppercase UUIDs', async () => {
     for (const id of [currentUser.id, currentUser.id.toUpperCase()]) {
       await request(app.getHttpServer())
-        .get(`/user/${id}`)
+        .get(`/api/user/${id}`)
         .auth(accessToken, { type: 'bearer' })
         .expect(200)
         .expect(({ body }) => {
@@ -54,10 +54,10 @@ describe('User access (e2e)', () => {
 
   it('requires authentication before validating or looking up a user ID', async () => {
     for (const id of [currentUser.id, randomUUID(), 'invalid-id']) {
-      await request(app.getHttpServer()).get(`/user/${id}`).expect(401);
+      await request(app.getHttpServer()).get(`/api/user/${id}`).expect(401);
     }
     await request(app.getHttpServer())
-      .get(`/user/${currentUser.id}`)
+      .get(`/api/user/${currentUser.id}`)
       .auth('invalid-token', { type: 'bearer' })
       .expect(401);
   });
@@ -73,7 +73,7 @@ describe('User access (e2e)', () => {
 
     for (const id of [anotherUser.id, randomUUID()]) {
       const response = await request(app.getHttpServer())
-        .get(`/user/${id}`)
+        .get(`/api/user/${id}`)
         .auth(accessToken, { type: 'bearer' })
         .expect(403);
       expect(response.body.error).toEqual(
@@ -92,7 +92,7 @@ describe('User access (e2e)', () => {
     'rejects malformed UUID %s after authentication',
     async (id) => {
       await request(app.getHttpServer())
-        .get(`/user/${id}`)
+        .get(`/api/user/${id}`)
         .auth(accessToken, { type: 'bearer' })
         .expect(400);
     },
@@ -100,14 +100,14 @@ describe('User access (e2e)', () => {
 
   it('does not expose user creation or list routes with or without authentication', async () => {
     for (const token of [undefined, accessToken]) {
-      const list = request(app.getHttpServer()).get('/user');
+      const list = request(app.getHttpServer()).get('/api/user');
       if (token) {
         list.auth(token, { type: 'bearer' });
       }
       await list.expect(404);
 
       const create = request(app.getHttpServer())
-        .post('/user')
+        .post('/api/user')
         .send({ name: 'Bob', email: 'bob@example.com' });
       if (token) {
         create.auth(token, { type: 'bearer' });

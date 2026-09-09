@@ -159,7 +159,7 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('wraps existing data fields and exposes a fresh server request ID through CORS', async () => {
     const response = await request(app.getHttpServer())
-      .get('/http-probe/object')
+      .get('/api/http-probe/object')
       .set('Origin', 'http://localhost:5173')
       .set('X-Request-Id', 'client-controlled-id')
       .expect(200);
@@ -176,7 +176,7 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('returns validation details and logs the rejected request exactly once', async () => {
     const response = await request(app.getHttpServer())
-      .post('/http-probe/validate')
+      .post('/api/http-probe/validate')
       .send({ name: 'x' })
       .expect(400);
 
@@ -194,7 +194,7 @@ describe('HTTP infrastructure (e2e)', () => {
         event: 'http_request',
         requestId: id,
         method: 'POST',
-        path: '/http-probe/validate',
+        path: '/api/http-probe/validate',
         statusCode: 400,
         durationMs: expect.any(Number),
         outcome: 'completed',
@@ -204,7 +204,7 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('hides unknown exception messages and causes from responses and logs', async () => {
     const response = await request(app.getHttpServer())
-      .get('/http-probe/unsafe-error')
+      .get('/api/http-probe/unsafe-error')
       .expect(500);
 
     const id = expectError(
@@ -217,7 +217,7 @@ describe('HTTP infrastructure (e2e)', () => {
       event: 'http_error',
       requestId: id,
       method: 'GET',
-      path: '/http-probe/unsafe-error',
+      path: '/api/http-probe/unsafe-error',
       statusCode: 500,
       code: 'INTERNAL_SERVER_ERROR',
     });
@@ -253,7 +253,7 @@ describe('HTTP infrastructure (e2e)', () => {
     'normalizes custom HTTP %i errors with errorCode %s',
     async (status, errorCode, expectedCode, expectedMessage) => {
       const operation = request(app.getHttpServer()).get(
-        `/http-probe/custom-error/${status}`,
+        `/api/http-probe/custom-error/${status}`,
       );
       if (errorCode) operation.query({ errorCode });
       const response = await operation.expect(status);
@@ -274,7 +274,7 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('assigns a request ID before malformed JSON is rejected', async () => {
     const response = await request(app.getHttpServer())
-      .post('/http-probe/validate')
+      .post('/api/http-probe/validate')
       .set('Content-Type', 'application/json')
       .send('{"private-malformed-json":')
       .expect(400);
@@ -287,7 +287,7 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('uses the error envelope and a sanitized log path for unknown routes', async () => {
     const response = await request(app.getHttpServer())
-      .get('/private-unmatched-path?token=private-query')
+      .get('/api/private-unmatched-path?token=private-query')
       .expect(404);
 
     const id = expectError(response, 'NOT_FOUND', 'Not Found');
@@ -302,7 +302,7 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('includes a request ID and one completion log when the global guard rejects a request', async () => {
     const response = await request(app.getHttpServer())
-      .get('/auth/me')
+      .get('/api/auth/me')
       .set('Authorization', 'Bearer private-invalid-token')
       .expect(401);
 
@@ -312,7 +312,7 @@ describe('HTTP infrastructure (e2e)', () => {
         event: 'http_request',
         requestId: id,
         method: 'GET',
-        path: '/auth/me',
+        path: '/api/auth/me',
         statusCode: 401,
         durationMs: expect.any(Number),
         outcome: 'completed',
@@ -325,10 +325,10 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('keeps 204 and HEAD responses empty while retaining their request IDs', async () => {
     const noContent = await request(app.getHttpServer())
-      .post('/http-probe/no-content')
+      .post('/api/http-probe/no-content')
       .expect(204);
     const head = await request(app.getHttpServer())
-      .head('/http-probe/object')
+      .head('/api/http-probe/object')
       .expect(200);
 
     expect(noContent.text).toBe('');
@@ -340,7 +340,7 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('preserves StreamableFile content without an envelope', async () => {
     const response = await request(app.getHttpServer())
-      .get('/http-probe/file')
+      .get('/api/http-probe/file')
       .expect(200);
 
     expect(response.headers['content-type']).toContain('text/plain');
@@ -350,7 +350,7 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('preserves finite SSE events without injecting an envelope', async () => {
     const response = await request(app.getHttpServer())
-      .get('/http-probe/events')
+      .get('/api/http-probe/events')
       .expect(200);
 
     expect(response.headers['content-type']).toContain('text/event-stream');
@@ -361,20 +361,22 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('lets RawResponse skip successful wrapping while keeping unified errors', async () => {
     const response = await request(app.getHttpServer())
-      .get('/http-probe/raw')
+      .get('/api/http-probe/raw')
       .expect(200);
     expect(response.body).toEqual({ original: true });
     requestId(response);
 
     const failure = await request(app.getHttpServer())
-      .get('/http-probe/raw-error')
+      .get('/api/http-probe/raw-error')
       .expect(403);
     expectError(failure, 'FORBIDDEN', 'Forbidden');
   });
 
   it('logs a route template once without query, body, authorization, or cookies', async () => {
     const response = await request(app.getHttpServer())
-      .post('/http-probe/items/private-route-value?token=private-query-value')
+      .post(
+        '/api/http-probe/items/private-route-value?token=private-query-value',
+      )
       .set('Authorization', 'Bearer private-access-value')
       .set('Cookie', 'refresh_token=private-cookie-value')
       .send({ password: 'private-body-value' })
@@ -385,7 +387,7 @@ describe('HTTP infrastructure (e2e)', () => {
         event: 'http_request',
         requestId: requestId(response),
         method: 'POST',
-        path: '/http-probe/items/:id',
+        path: '/api/http-probe/items/:id',
         statusCode: 201,
         durationMs: expect.any(Number),
         outcome: 'completed',
@@ -406,7 +408,7 @@ describe('HTTP infrastructure (e2e)', () => {
 
   it('assigns a request ID before CORS finishes a preflight response', async () => {
     const response = await request(app.getHttpServer())
-      .options('/http-probe/object')
+      .options('/api/http-probe/object')
       .set('Origin', 'http://localhost:5173')
       .set('Access-Control-Request-Method', 'GET')
       .expect(204);

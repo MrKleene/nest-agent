@@ -41,7 +41,7 @@ describe('Auth (e2e)', () => {
 
   function register(body: object = credentials) {
     return request(app.getHttpServer())
-      .post('/auth/register')
+      .post('/api/auth/register')
       .set('Origin', 'http://localhost:5173')
       .send(body);
   }
@@ -53,7 +53,7 @@ describe('Auth (e2e)', () => {
     },
   ) {
     return request(app.getHttpServer())
-      .post('/auth/login')
+      .post('/api/auth/login')
       .set('Origin', 'http://localhost:5173')
       .send(body);
   }
@@ -103,14 +103,14 @@ describe('Auth (e2e)', () => {
     expect(payload.exp - payload.iat).toBe(900);
 
     await request(app.getHttpServer())
-      .get('/auth/me')
+      .get('/api/auth/me')
       .auth(session.body.data.access_token, { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {
         expect(body).toEqual({ data: user });
       });
     await request(app.getHttpServer())
-      .get(`/user/${user.id}`)
+      .get(`/api/user/${user.id}`)
       .auth(session.body.data.access_token, { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {
@@ -202,7 +202,7 @@ describe('Auth (e2e)', () => {
 
   it('keeps the home, registration, and login routes public even with an invalid bearer token', async () => {
     await request(app.getHttpServer())
-      .get('/')
+      .get('/api')
       .auth('invalid-token', { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {
@@ -252,14 +252,14 @@ describe('Auth (e2e)', () => {
       signerWithoutExpiry.sign(claims),
     ];
 
-    await request(app.getHttpServer()).get('/auth/me').expect(401);
+    await request(app.getHttpServer()).get('/api/auth/me').expect(401);
     await request(app.getHttpServer())
-      .get('/auth/me')
+      .get('/api/auth/me')
       .set('Authorization', `Basic ${jwt.sign(claims, { expiresIn: 900 })}`)
       .expect(401);
     for (const token of invalidTokens) {
       const response = await request(app.getHttpServer())
-        .get('/auth/me')
+        .get('/api/auth/me')
         .auth(token, { type: 'bearer' })
         .expect(401);
       expect(response.body).toEqual({
@@ -279,7 +279,7 @@ describe('Auth (e2e)', () => {
     app = await createApp();
 
     await request(app.getHttpServer())
-      .get('/auth/me')
+      .get('/api/auth/me')
       .auth(oldSession.body.data.access_token, { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {
@@ -299,20 +299,20 @@ describe('Auth (e2e)', () => {
       .db.delete(users)
       .where(eq(users.id, original.body.data.id));
     await request(app.getHttpServer())
-      .get('/auth/me')
+      .get('/api/auth/me')
       .auth(oldSession.body.data.access_token, { type: 'bearer' })
       .expect(401);
 
     const replacement = await register().expect(201);
     expect(replacement.body.data.id).not.toBe(original.body.data.id);
     await request(app.getHttpServer())
-      .get('/auth/me')
+      .get('/api/auth/me')
       .auth(oldSession.body.data.access_token, { type: 'bearer' })
       .expect(401);
 
     const newSession = await login().expect(200);
     await request(app.getHttpServer())
-      .get('/auth/me')
+      .get('/api/auth/me')
       .auth(newSession.body.data.access_token, { type: 'bearer' })
       .expect(200)
       .expect(({ body }) => {

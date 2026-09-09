@@ -34,7 +34,9 @@ export class AuthCookieService {
       secure:
         this.config.getOrThrow('NODE_ENV', { infer: true }) === 'production',
       sameSite: 'lax',
-      path: '/auth',
+      path: `/${[this.config.getOrThrow('API_PREFIX', { infer: true }), 'auth']
+        .filter(Boolean)
+        .join('/')}`,
     };
   }
 }
