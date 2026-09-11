@@ -46,3 +46,27 @@ CORS 仅允许 `CLIENT_ORIGIN`，并允许凭据。`OriginGuard` 对 `POST /api/
 这项开发环境例外只放宽来源检查，参数校验、Access Token 和会话校验仍然执行。`@Public()` 只跳过 Access 鉴权，不跳过来源检查。
 
 Cookie 属性、生命周期和路径变化的影响见 [认证说明](authentication.md)。
+
+## DeepSeek 配置
+
+通过 OpenAI SDK 接入 DeepSeek；服务地址使用 `https://api.deepseek.com`，密钥使用 DeepSeek 签发的 API Key。
+
+```dotenv
+DEEPSEEK_API_KEY=
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_TIMEOUT_MS=60000
+```
+
+| 变量                  | 默认值 / 要求                   | 用途                              |
+| --------------------- | ------------------------------- | --------------------------------- |
+| `DEEPSEEK_API_KEY`    | 空字符串；去除首尾空格          | DeepSeek 密钥，留空不影响应用启动 |
+| `DEEPSEEK_MODEL`      | `deepseek-v4-flash`；非空字符串 | 模型名称                          |
+| `DEEPSEEK_TIMEOUT_MS` | `60000`；正整数，单位毫秒       | 模型调用超时                      |
+
+真实密钥仅填写在本地 `.env`，不要放入 `.env.example`。修改配置后重启应用。Zod 校验格式和默认值，不验证密钥是否有效或账号是否有模型访问权限。
+
+当前已完成 SDK 安装、配置校验和客户端依赖注入，尚未实现对话接口。`LlmModule` 通过 `useFactory` 注册 OpenAI 客户端，设置 DeepSeek 地址、配置的超时以及 `maxRetries: 0`；Nest 默认按单例复用该实例。`LlmService` 使用 `@Inject(OpenAI)` 获取客户端，不自行创建实例。创建客户端本身不会发送模型请求。
+
+密钥为空时工厂返回 `null`，应用仍可启动；后续对话方法会在调用前检查客户端是否可用，并在未配置密钥时返回 503，目前该接口尚未实现。配置变更需要重启以重新创建客户端。
+
+模块职责：`ChatModule` 负责对话业务，导入 `LlmModule`；`ChatService` 注入 `LlmService`。`LlmModule` 只导出 `LlmService`，SDK 客户端保留在模块内部。`AppModule` 通过 `ChatModule` 间接加载 `LlmModule`，无需重复导入，也不将它注册为全局模块。当前暂不创建 `AgentModule`，后续出现工具调用和多步骤任务编排时再引入。
