@@ -16,6 +16,9 @@ export const envSchema = z.object({
     )
     .default('api'),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+  DEEPSEEK_API_KEY: z.string().trim().default(''),
+  DEEPSEEK_MODEL: z.string().trim().min(1).default('deepseek-v4-flash'),
+  DEEPSEEK_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
   JWT_SECRET: z.string().trim().min(32),
   JWT_ACCESS_TOKEN_TTL_SECONDS: z.coerce
     .number()

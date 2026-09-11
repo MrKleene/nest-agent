@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module.js';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter.js';
 import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor.js';
 import { HttpContextMiddleware } from './common/middleware/http-context.middleware.js';
+import { ChatModule } from './chat/chat.module.js';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { HttpContextMiddleware } from './common/middleware/http-context.middlewa
     UserModule,
     AuthModule,
     DatabaseModule,
+    ChatModule,
   ],
   controllers: [AppController],
   providers: [
